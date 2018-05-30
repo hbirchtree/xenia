@@ -19,6 +19,7 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <time.h>
+#include <signal.h>
 #include <unistd.h>
 
 namespace xe {
@@ -84,16 +85,47 @@ bool SetTlsValue(TlsHandle handle, uintptr_t value) {
 class PosixHighResolutionTimer : public HighResolutionTimer {
  public:
   PosixHighResolutionTimer(std::function<void()> callback)
-      : callback_(callback) {}
-  ~PosixHighResolutionTimer() override {}
+      : callback_(callback), handle_(0) {}
+  ~PosixHighResolutionTimer() override {
+    if(handle_ != 0)
+      timer_delete(handle_);
+  }
 
   bool Initialize(std::chrono::milliseconds period) {
-    assert_always();
-    return false;
+    /* Reference: http://man7.org/linux/man-pages/man2/timer_create.2.html */
+    struct sigevent event;
+    struct itimerspec ts;
+    using namespace std::chrono;
+    constexpr uint64_t mill_unit = 1000000;
+
+    event.sigev_notify = SIGEV_THREAD;
+    event.sigev_value.sival_ptr = &callback_;
+    event.sigev_notify_function = [](union sigval arg)
+    {
+      auto callback_ptr = reinterpret_cast<std::function<void()>*>(arg.sival_ptr);
+      (*callback_ptr)();
+    };
+
+    if(timer_create(CLOCK_REALTIME, nullptr, &handle_) != 0)
+      return false;
+
+    ts.it_interval.tv_sec = duration_cast<seconds>(period).count();
+    ts.it_interval.tv_nsec = duration_cast<nanoseconds>(period).count()%mill_unit;
+    ts.it_value.tv_sec = 0;
+    ts.it_value.tv_nsec = 0;
+
+    if(timer_settime(handle_, 0, &ts, nullptr) != 0)
+    {
+      timer_delete(handle_);
+      return false;
+    }
+
+    return true;
   }
 
  private:
   std::function<void()> callback_;
+  timer_t handle_;
 };
 
 std::unique_ptr<HighResolutionTimer> HighResolutionTimer::CreateRepeating(
@@ -369,9 +401,22 @@ std::unique_ptr<Timer> Timer::CreateSynchronizationTimer() {
   return std::make_unique<PosixTimer>(false);
 }
 
+struct ThreadStartData {
+  std::function<void()> start_routine;
+  std::shared_ptr<std::mutex> initial_suspension_;
+};
+
 class PosixThread : public PosixThreadHandle<Thread> {
+ std::shared_ptr<std::mutex> initial_suspend_;
+ uint32_t suspend_count;
  public:
-  explicit PosixThread(pthread_t handle) : PosixThreadHandle(handle) {}
+  explicit PosixThread(pthread_t handle, ThreadStartData* start_data = nullptr)
+        : PosixThreadHandle(handle), suspend_count(0) {
+    if(start_data) {
+      start_data->initial_suspension_ = start_data->initial_suspension_;
+      suspend_count = 1;
+    }
+  }
   ~PosixThread() = default;
 
   void set_name(std::string name) override {
@@ -407,8 +452,15 @@ class PosixThread : public PosixThreadHandle<Thread> {
   }
 
   bool Resume(uint32_t* out_new_suspend_count = nullptr) override {
-    assert_always();
-    return false;
+    if(initial_suspend_ && suspend_count > 0)
+    {
+      initial_suspend_->unlock();
+      suspend_count = 0;
+    }else
+      return false;
+    if(out_new_suspend_count)
+      *out_new_suspend_count = suspend_count;
+    return true;
   }
 
   bool Suspend(uint32_t* out_previous_suspend_count = nullptr) override {
@@ -421,15 +473,16 @@ class PosixThread : public PosixThreadHandle<Thread> {
 
 thread_local std::unique_ptr<PosixThread> current_thread_ = nullptr;
 
-struct ThreadStartData {
-  std::function<void()> start_routine;
-};
 void* ThreadStartRoutine(void* parameter) {
   current_thread_ =
       std::unique_ptr<PosixThread>(new PosixThread(::pthread_self()));
 
   auto start_data = reinterpret_cast<ThreadStartData*>(parameter);
+  if(start_data->initial_suspension_)
+      start_data->initial_suspension_->lock();
   start_data->start_routine();
+  if(start_data->initial_suspension_)
+      start_data->initial_suspension_->unlock();
   delete start_data;
   return 0;
 }
@@ -438,7 +491,13 @@ std::unique_ptr<Thread> Thread::Create(CreationParameters params,
                                        std::function<void()> start_routine) {
   auto start_data = new ThreadStartData({std::move(start_routine)});
 
-  assert_false(params.create_suspended);
+  if(params.create_suspended)
+  {
+      start_data->initial_suspension_ = std::make_shared<std::mutex>();
+      start_data->initial_suspension_->lock();
+  }
+
+//  assert_false(params.create_suspended);
   pthread_t handle;
   pthread_attr_t attr;
   pthread_attr_init(&attr);
@@ -451,7 +510,7 @@ std::unique_ptr<Thread> Thread::Create(CreationParameters params,
     return nullptr;
   }
 
-  return std::unique_ptr<PosixThread>(new PosixThread(handle));
+  return std::unique_ptr<PosixThread>(new PosixThread(handle, start_data));
 }
 
 Thread* Thread::GetCurrentThread() {
