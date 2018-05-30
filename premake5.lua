@@ -102,6 +102,11 @@ filter("platforms:Linux")
     "`pkg-config --libs gtk+-3.0`",
   })
 
+filter({"platforms:Linux", "configurations:Debug"})
+  buildoptions({
+    "-g"
+  })
+
 filter({"platforms:Linux", "kind:*App"})
   linkgroups("On")
 
