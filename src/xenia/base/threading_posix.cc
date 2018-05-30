@@ -13,6 +13,7 @@
 #include "xenia/base/logging.h"
 
 #include <pthread.h>
+#include <semaphore.h>
 #include <sys/eventfd.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
@@ -302,12 +303,20 @@ std::unique_ptr<Event> Event::CreateAutoResetEvent(bool initial_state) {
 // TODO(dougvj)
 class PosixSemaphore : public PosixConditionHandle<Semaphore> {
  public:
-  PosixSemaphore(int initial_count, int maximum_count) { assert_always(); }
+  PosixSemaphore(int initial_count, int maximum_count) {
+    sem_init(&semaphore_, 0, maximum_count);
+    for(int i = 0; i<initial_count; i++)
+      sem_trywait(&semaphore_);
+  }
   ~PosixSemaphore() override = default;
   bool Release(int release_count, int* out_previous_count) override {
-    assert_always();
+    sem_getvalue(&semaphore_, out_previous_count);
+    for(int i = 0; i<release_count; i++)
+      sem_post(&semaphore_);
     return false;
   }
+ private:
+  sem_t semaphore_;
 };
 
 std::unique_ptr<Semaphore> Semaphore::Create(int initial_count,
