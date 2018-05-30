@@ -40,7 +40,10 @@ XModule::~XModule() {
 }
 
 bool XModule::Matches(const std::string& name) const {
-  if (strcasecmp(xe::find_name_from_path(path_).c_str(), name.c_str()) == 0) {
+  auto native_path = xe::find_name_from_path(path_);
+  auto win32_path = xe::find_name_from_path(path_, '\\');
+  if (strcasecmp(native_path.c_str(), name.c_str()) == 0 ||
+          strcasecmp(win32_path.c_str(), name.c_str()) == 0) {
     return true;
   }
   if (strcasecmp(name_.c_str(), name.c_str()) == 0) {
