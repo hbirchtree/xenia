@@ -324,6 +324,9 @@ void FatalError(const char* fmt, ...) {
     MessageBoxA(NULL, log_format_buffer_.data(), "Xenia Error",
                 MB_OK | MB_ICONERROR | MB_APPLMODAL | MB_SETFOREGROUND);
   }
+#elif XE_PLATFORM_LINUX
+  fprintf(stderr, fmt, args);
+  fprintf(stderr, "\n");
 #endif  // WIN32
 
   exit(1);
