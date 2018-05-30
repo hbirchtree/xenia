@@ -10,6 +10,9 @@
 #include "xenia/base/mapped_memory.h"
 
 #include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <cstdio>
 #include <memory>
 
@@ -20,7 +23,37 @@ namespace xe {
 class PosixMappedMemory : public MappedMemory {
  public:
   PosixMappedMemory(const std::wstring& path, Mode mode)
-      : MappedMemory(path, mode), file_handle(nullptr) {}
+      : MappedMemory(path, mode), file_handle(nullptr) {
+    int open_flags = 0;
+    int protection = 0;
+    int mapping = MAP_PRIVATE;
+    struct stat file_state;
+    std::string posix_path(path.begin(), path.end());
+
+    switch(mode)
+    {
+    case Mode::kReadWrite:
+      open_flags = O_RDWR;
+      protection = PROT_READ | PROT_WRITE;
+        break;
+    case Mode::kRead:
+      open_flags = O_RDONLY;
+      protection = PROT_READ;
+      break;
+    default:
+      abort();
+      break;
+    }
+
+    int fd = open(posix_path.c_str(), open_flags);
+
+    if(fd == -1 || fstat(fd, &file_state) != 0)
+      abort();
+
+    data_ = mmap(nullptr, file_state.st_size, protection, mapping, fd, 0);
+
+    close(fd);
+  }
 
   ~PosixMappedMemory() override {
     if (data_) {
