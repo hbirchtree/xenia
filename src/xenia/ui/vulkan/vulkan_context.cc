@@ -81,8 +81,7 @@ bool VulkanContext::Initialize() {
     create_info.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
     create_info.pNext = nullptr;
     create_info.flags = 0;
-    create_info.connection = static_cast<xcb_connection_t*>(
-        target_window_->native_platform_handle());
+    create_info.connection = connection;
     create_info.window = static_cast<xcb_window_t>(window);
     status = vkCreateXcbSurfaceKHR(*provider->instance(), &create_info, nullptr,
                                    &surface);

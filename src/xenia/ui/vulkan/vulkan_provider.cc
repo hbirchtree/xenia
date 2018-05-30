@@ -55,6 +55,11 @@ bool VulkanProvider::Initialize() {
                                       false);
   instance_->DeclareRequiredExtension("VK_KHR_win32_surface",
                                       Version::Make(0, 0, 0), false);
+#elif XE_PLATFORM_LINUX
+  instance_->DeclareRequiredExtension("VK_KHR_surface", Version::Make(0, 0, 0),
+                                      false);
+  instance_->DeclareRequiredExtension("VK_KHR_xcb_surface",
+                                      Version::Make(0, 0, 0), false);
 #endif
 
   // Attempt initialization and device query.

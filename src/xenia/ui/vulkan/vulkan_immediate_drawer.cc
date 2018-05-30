@@ -747,7 +747,9 @@ std::unique_ptr<ImmediateTexture> VulkanImmediateDrawer::WrapTexture(
     return nullptr;
   }
 
-  return texture;
+  std::unique_ptr<ImmediateTexture> baseTexture = std::move(texture);
+
+  return baseTexture;
 }
 
 void VulkanImmediateDrawer::UpdateTexture(ImmediateTexture* texture,
