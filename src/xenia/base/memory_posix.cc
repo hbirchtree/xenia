@@ -13,6 +13,8 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <string.h>
+#include <stdio.h>
 
 namespace xe {
 namespace memory {
@@ -40,7 +42,16 @@ void* AllocFixed(void* base_address, size_t length,
                  AllocationType allocation_type, PageAccess access) {
   // mmap does not support reserve / commit, so ignore allocation_type.
   uint32_t prot = ToPosixProtectFlags(access);
-  return mmap(base_address, length, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  void* ptr;
+  ptr =  mmap(base_address, length, prot, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+
+#ifndef NDEBUG
+  if(!ptr || ptr != base_address)
+  {
+    fprintf(stderr, "AllocFixed: %s\n", strerror(errno));
+  }
+#endif
+  return ptr;
 }
 
 bool DeallocFixed(void* base_address, size_t length,
@@ -50,7 +61,8 @@ bool DeallocFixed(void* base_address, size_t length,
 
 bool Protect(void* base_address, size_t length, PageAccess access,
              PageAccess* out_old_access) {
-  // Linux does not have a syscall to query memory permissions.
+  
+    // Linux does not have a syscall to query memory permissions.
   assert_null(out_old_access);
 
   uint32_t prot = ToPosixProtectFlags(access);

@@ -169,7 +169,8 @@ std::vector<FileInfo> ListFiles(const std::wstring& path) {
 
     info.name = xe::to_wstring(ent->d_name);
     struct stat st;
-    stat((xe::to_string(path) + xe::to_string(info.name)).c_str(), &st);
+    stat((xe::to_string(path) + kPathSeparator +
+          xe::to_string(info.name)).c_str(), &st);
     info.create_timestamp = convertUnixtimeToWinFiletime(st.st_ctime);
     info.access_timestamp = convertUnixtimeToWinFiletime(st.st_atime);
     info.write_timestamp = convertUnixtimeToWinFiletime(st.st_mtime);
@@ -182,6 +183,8 @@ std::vector<FileInfo> ListFiles(const std::wstring& path) {
     }
     result.push_back(info);
   }
+
+  closedir(dir);
 
   return result;
 }

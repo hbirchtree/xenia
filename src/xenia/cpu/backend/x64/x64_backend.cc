@@ -394,6 +394,16 @@ X64ThunkEmitter::X64ThunkEmitter(X64Backend* backend, XbyakAllocator* allocator)
 
 X64ThunkEmitter::~X64ThunkEmitter() {}
 
+#if XE_PLATFORM_WIN32
+#define THUNK_TARGET_REG  rcx
+#define THUNK_CONTEXT_REG rdx
+#define THUNK_RETURN_REG  r8
+#else
+#define THUNK_TARGET_REG  rdi
+#define THUNK_CONTEXT_REG rsi
+#define THUNK_RETURN_REG  rdx
+#endif
+
 HostToGuestThunk X64ThunkEmitter::EmitHostToGuestThunk() {
   // rcx = target
   // rdx = arg0 (context)
@@ -401,9 +411,10 @@ HostToGuestThunk X64ThunkEmitter::EmitHostToGuestThunk() {
 
   const size_t stack_size = StackLayout::THUNK_STACK_SIZE;
   // rsp + 0 = return address
-  mov(qword[rsp + 8 * 3], r8);
-  mov(qword[rsp + 8 * 2], rdx);
-  mov(qword[rsp + 8 * 1], rcx);
+  mov(qword[rsp + 8 * 3], THUNK_RETURN_REG);
+  mov(qword[rsp + 8 * 2], THUNK_CONTEXT_REG);
+  mov(qword[rsp + 8 * 1], THUNK_TARGET_REG);
+
   sub(rsp, stack_size);
 
   // Preserve nonvolatile registers.
@@ -428,9 +439,9 @@ HostToGuestThunk X64ThunkEmitter::EmitHostToGuestThunk() {
   movaps(qword[rsp + offsetof(StackLayout::Thunk, xmm[8])], xmm14);
   movaps(qword[rsp + offsetof(StackLayout::Thunk, xmm[9])], xmm15);
 
-  mov(rax, rcx);
-  mov(rsi, rdx);  // context
-  mov(rcx, r8);   // return address
+  mov(rax, THUNK_TARGET_REG);
+  mov(rsi, THUNK_CONTEXT_REG);  // context
+  mov(rcx, THUNK_RETURN_REG);   // return address
   call(rax);
 
   movaps(xmm6, qword[rsp + offsetof(StackLayout::Thunk, xmm[0])]);
@@ -455,26 +466,46 @@ HostToGuestThunk X64ThunkEmitter::EmitHostToGuestThunk() {
   mov(r15, qword[rsp + offsetof(StackLayout::Thunk, r[8])]);
 
   add(rsp, stack_size);
-  mov(rcx, qword[rsp + 8 * 1]);
-  mov(rdx, qword[rsp + 8 * 2]);
-  mov(r8, qword[rsp + 8 * 3]);
+  mov(THUNK_TARGET_REG, qword[rsp + 8 * 1]);
+  mov(THUNK_CONTEXT_REG, qword[rsp + 8 * 2]);
+  mov(THUNK_RETURN_REG, qword[rsp + 8 * 3]);
   ret();
 
   void* fn = Emplace(stack_size);
   return (HostToGuestThunk)fn;
 }
 
+#undef THUNK_TARGET_REG
+#undef THUNK_CONTEXT_REG
+#undef THUNK_RETURN_REG
+
+#if XE_PLATFORM_WIN32
+#define THUNK_CONTEXT rcx
+#define THUNK_ARG0    rdx
+#define THUNK_ARG1    r8
+#define THUNK_ARG2    r9
+#else
+#define THUNK_CONTEXT rdi
+#define THUNK_ARG0    rsi
+#define THUNK_ARG1    rdx
+#define THUNK_ARG2    rcx
+#endif
+
 GuestToHostThunk X64ThunkEmitter::EmitGuestToHostThunk() {
+  // rdx = target function  
   // rcx = context
-  // rdx = target function
   // r8  = arg0
   // r9  = arg1
   // r10 = arg2
 
   const size_t stack_size = StackLayout::THUNK_STACK_SIZE;
   // rsp + 0 = return address
-  mov(qword[rsp + 8 * 2], rdx);
-  mov(qword[rsp + 8 * 1], rcx);
+#if XE_PLATFORM_LINUX
+  mov(qword[rsp + 8 * 4], THUNK_ARG2);
+  mov(qword[rsp + 8 * 3], THUNK_ARG1);
+#endif
+  mov(qword[rsp + 8 * 2], THUNK_ARG0);
+  mov(qword[rsp + 8 * 1], THUNK_CONTEXT);
   sub(rsp, stack_size);
 
   // Save off volatile registers.
@@ -493,10 +524,10 @@ GuestToHostThunk X64ThunkEmitter::EmitGuestToHostThunk() {
   // movaps(qword[rsp + offsetof(StackLayout::Thunk, xmm[5])], xmm5);
 
   mov(rax, rdx);
-  mov(rcx, rsi);  // context
-  mov(rdx, r8);
-  mov(r8, r9);
-  mov(r9, r10);
+  mov(THUNK_CONTEXT, rsi);  // context
+  mov(THUNK_ARG0, r8);
+  mov(THUNK_ARG1, r9);
+  mov(THUNK_ARG2, r10);
   call(rax);
 
   // movaps(xmm1, qword[rsp + offsetof(StackLayout::Thunk, xmm[1])]);
@@ -513,8 +544,12 @@ GuestToHostThunk X64ThunkEmitter::EmitGuestToHostThunk() {
   // mov(r11, qword[rsp + offsetof(StackLayout::Thunk, r[5])]);
 
   add(rsp, stack_size);
-  mov(rcx, qword[rsp + 8 * 1]);
-  mov(rdx, qword[rsp + 8 * 2]);
+  mov(THUNK_CONTEXT, qword[rsp + 8 * 1]);
+  mov(THUNK_ARG0, qword[rsp + 8 * 2]);
+#if XE_PLATFORM_LINUX
+  mov(THUNK_ARG1, qword[rsp + 8 * 3]);
+  mov(THUNK_ARG2, qword[rsp + 8 * 4]);
+#endif
   ret();
 
   void* fn = Emplace(stack_size);
@@ -531,18 +566,18 @@ ResolveFunctionThunk X64ThunkEmitter::EmitResolveFunctionThunk() {
   uint32_t stack_size = 0x18;
 
   // rsp + 0 = return address
-  mov(qword[rsp + 8 * 2], rdx);
-  mov(qword[rsp + 8 * 1], rcx);
+  mov(qword[rsp + 8 * 2], THUNK_CONTEXT);
+  mov(qword[rsp + 8 * 1], THUNK_ARG0);
   sub(rsp, stack_size);
 
-  mov(rcx, rsi);  // context
-  mov(rdx, rbx);
+  mov(THUNK_CONTEXT, rsi);  // context
+  mov(THUNK_ARG0, rbx);
   mov(rax, uint64_t(&ResolveFunction));
   call(rax);
 
   add(rsp, stack_size);
-  mov(rcx, qword[rsp + 8 * 1]);
-  mov(rdx, qword[rsp + 8 * 2]);
+  mov(THUNK_ARG0, qword[rsp + 8 * 1]);
+  mov(THUNK_CONTEXT, qword[rsp + 8 * 2]);
   jmp(rax);
 
   void* fn = Emplace(stack_size);

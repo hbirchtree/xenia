@@ -97,8 +97,9 @@ class StackLayout {
     uint64_t arg_temp[3];
     uint8_t scratch[16];
     uint64_t r[10];
+    uint64_t pad1;
     vec128_t xmm[10];
-    uint64_t dummy;
+    uint64_t pad2[2];
   });
   static_assert(sizeof(Thunk) % 16 == 0,
                 "sizeof(Thunk) must be a multiple of 16!");

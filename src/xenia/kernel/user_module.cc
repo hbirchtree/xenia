@@ -342,6 +342,8 @@ void UserModule::Dump() {
     return;
   }
 
+  return;
+
   StringBuffer sb;
 
   xe::cpu::ExportResolver* export_resolver =

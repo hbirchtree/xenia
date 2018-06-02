@@ -7,12 +7,15 @@
  ******************************************************************************
  */
 
+#define TIME_MAX(x, y) ((x > y) ? x : y)
+
 #include "xenia/base/threading.h"
 
 #include "xenia/base/assert.h"
 #include "xenia/base/logging.h"
 
 #include <pthread.h>
+#include <string.h>
 #include <semaphore.h>
 #include <sys/eventfd.h>
 #include <sys/syscall.h>
@@ -168,9 +171,14 @@ class PosixCondition {
 
   bool Wait(unsigned int timeout_ms) {
     // Assume 0 means no timeout, not instant timeout
-    if (timeout_ms == 0) {
-      Wait();
+    if(timeout_ms == 0) {
+      return Wait();
     }
+
+    return WaitInstant(timeout_ms);
+  }
+
+  bool WaitInstant(unsigned int timeout_ms) {
     struct timespec time_to_wait;
     struct timeval now;
     gettimeofday(&now, NULL);
@@ -208,31 +216,57 @@ class PosixCondition {
   pthread_mutex_t mutex_;
 };
 
+class PosixWaitHandle
+{
+ public:
+  virtual ~PosixWaitHandle() {}
+  virtual PosixCondition* conditional_handle() = 0;
+};
+
 // Native posix thread handle
 template <typename T>
-class PosixThreadHandle : public T {
+class PosixThreadHandle : public T, public PosixWaitHandle {
  public:
   explicit PosixThreadHandle(pthread_t handle) : handle_(handle) {}
   ~PosixThreadHandle() override {}
 
  protected:
   void* native_handle() const override {
-    return reinterpret_cast<void*>(handle_);
+    union {
+      pthread_t p_handle;
+      void* handle_ptr;
+    } ptr_cast;
+
+    ptr_cast.handle_ptr = nullptr;
+    ptr_cast.p_handle = handle_;
+
+    return ptr_cast.handle_ptr;
+  }
+
+  PosixCondition* conditional_handle() override
+  {
+    return &conditional_handle_;
   }
 
   pthread_t handle_;
+  PosixCondition conditional_handle_;
 };
 
 // This is wraps a condition object as our handle because posix has no single
 // native handle for higher level concurrency constructs such as semaphores
 template <typename T>
-class PosixConditionHandle : public T {
+class PosixConditionHandle : public T, public PosixWaitHandle {
  public:
   ~PosixConditionHandle() override {}
 
  protected:
   void* native_handle() const override {
     return reinterpret_cast<void*>(const_cast<PosixCondition*>(&handle_));
+  }
+
+  PosixCondition* conditional_handle() override
+  {
+    return &handle_;
   }
 
   PosixCondition handle_;
@@ -242,46 +276,66 @@ template <typename T>
 class PosixFdHandle : public T {
  public:
   explicit PosixFdHandle(intptr_t handle) : handle_(handle) {}
+  PosixFdHandle(PosixFdHandle&& other) {
+    handle_ = other.handle_;
+    other.handle_ = -1;
+  }
   ~PosixFdHandle() override {
     close(handle_);
     handle_ = 0;
   }
 
- protected:
   void* native_handle() const override {
     return reinterpret_cast<void*>(handle_);
   }
 
+ protected:
   intptr_t handle_;
 };
 
 // TODO(dougvj)
 WaitResult Wait(WaitHandle* wait_handle, bool is_alertable,
                 std::chrono::milliseconds timeout) {
-  intptr_t handle = reinterpret_cast<intptr_t>(wait_handle->native_handle());
+  using namespace std::chrono;
 
-  fd_set set;
-  struct timeval time_val;
-  int ret;
+  // We introduce PosixWaitHandle to allow waiting on generic POSIX constructs
+  auto wait_ = dynamic_cast<PosixWaitHandle*>(wait_handle);
 
-  FD_ZERO(&set);
-  FD_SET(handle, &set);
-
-  time_val.tv_sec = timeout.count() / 1000;
-  time_val.tv_usec = timeout.count() * 1000;
-  ret = select(handle + 1, &set, NULL, NULL, &time_val);
-  if (ret == -1) {
-    return WaitResult::kFailed;
-  } else if (ret == 0) {
-    return WaitResult::kTimeout;
-  } else {
-    uint64_t buf = 0;
-    ret = read(handle, &buf, sizeof(buf));
-    if (ret < 8) {
+  // In this case, the object does not have a notification mechanism of its own
+  if(wait_)
+  {
+    if(wait_->conditional_handle()->Wait(timeout.count()))
+      return WaitResult::kSuccess;
+    else
       return WaitResult::kTimeout;
+  }
+  else {
+    // We attempt to check for a PosixFdHandle<Event>,
+    //  these use fd notifications
+    auto fdhandle = dynamic_cast<PosixFdHandle<Event>*>(wait_handle);    
+
+    if(fdhandle)
+    {
+      struct timeval tv;
+      fd_set set;
+      intptr_t handle = reinterpret_cast<intptr_t>(fdhandle->native_handle());
+      FD_ZERO(&set);
+      FD_SET(handle, &set);
+
+      tv.tv_sec = duration_cast<seconds>(timeout).count();
+      tv.tv_usec = TIME_MAX(duration_cast<microseconds>(timeout).count(), 0);
+
+      int res = select(handle, &set, nullptr, nullptr, &tv);
+      if(res == -1)
+        return WaitResult::kFailed;
+      else if(res == 0)
+        return WaitResult::kTimeout;
+      else
+        return WaitResult::kSuccess;
     }
 
-    return WaitResult::kSuccess;
+    assert_always();
+    return WaitResult::kFailed;
   }
 }
 
@@ -298,8 +352,30 @@ std::pair<WaitResult, size_t> WaitMultiple(WaitHandle* wait_handles[],
                                            size_t wait_handle_count,
                                            bool wait_all, bool is_alertable,
                                            std::chrono::milliseconds timeout) {
-  assert_always();
-  return std::pair<WaitResult, size_t>(WaitResult::kFailed, 0);
+  using clock = std::chrono::high_resolution_clock;
+
+  auto now = clock::now();
+
+  std::pair<WaitResult, size_t> out(WaitResult::kSuccess, 0);
+  while(true)
+  {
+    for(size_t i = 0; i<wait_handle_count; i++)
+    {
+      auto cond =
+              dynamic_cast<PosixWaitHandle*>(wait_handles[0])
+                ->conditional_handle();
+
+      if(cond->WaitInstant(0))
+      {
+        out.second = i;
+        return out;
+      }
+    }
+    if(timeout > (clock::now() - now))
+      return std::pair<WaitResult, size_t>(WaitResult::kTimeout, 0);
+  }
+
+  return std::pair<WaitResult, size_t>(WaitResult::kTimeout, 0);
 }
 
 // TODO(dougvj)
@@ -329,7 +405,7 @@ std::unique_ptr<Event> Event::CreateAutoResetEvent(bool initial_state) {
     return nullptr;
   }
 
-  return std::make_unique<PosixEvent>(PosixEvent(fd));
+  return std::make_unique<PosixEvent>(fd);
 }
 
 // TODO(dougvj)
@@ -413,7 +489,7 @@ class PosixThread : public PosixThreadHandle<Thread> {
   explicit PosixThread(pthread_t handle, ThreadStartData* start_data = nullptr)
         : PosixThreadHandle(handle), suspend_count(0) {
     if(start_data) {
-      start_data->initial_suspension_ = start_data->initial_suspension_;
+      initial_suspend_ = start_data->initial_suspension_;
       suspend_count = 1;
     }
   }

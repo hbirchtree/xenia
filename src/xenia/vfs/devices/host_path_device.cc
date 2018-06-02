@@ -78,7 +78,9 @@ void HostPathDevice::PopulateEntry(HostPathEntry* parent_entry) {
         child_info);
     parent_entry->children_.push_back(std::unique_ptr<Entry>(child));
 
-    if (child_info.type == xe::filesystem::FileInfo::Type::kDirectory) {
+    if (child_info.type == xe::filesystem::FileInfo::Type::kDirectory
+            && child_info.name != L".."
+            && child_info.name != L".") {
       PopulateEntry(child);
     }
   }

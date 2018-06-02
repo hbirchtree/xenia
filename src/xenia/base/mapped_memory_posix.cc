@@ -8,11 +8,13 @@
  */
 
 #include "xenia/base/mapped_memory.h"
+#include "xenia/base/assert.h"
 
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <string.h>
 #include <cstdio>
 #include <memory>
 
@@ -23,62 +25,31 @@ namespace xe {
 class PosixMappedMemory : public MappedMemory {
  public:
   PosixMappedMemory(const std::wstring& path, Mode mode)
-      : MappedMemory(path, mode), file_handle(nullptr) {
-    int open_flags = 0;
-    int protection = 0;
-    int mapping = MAP_PRIVATE;
-    struct stat file_state;
-    std::string posix_path(path.begin(), path.end());
-
-    switch(mode)
-    {
-    case Mode::kReadWrite:
-      open_flags = O_RDWR;
-      protection = PROT_READ | PROT_WRITE;
-        break;
-    case Mode::kRead:
-      open_flags = O_RDONLY;
-      protection = PROT_READ;
-      break;
-    default:
-      abort();
-      break;
-    }
-
-    int fd = open(posix_path.c_str(), open_flags);
-
-    if(fd == -1 || fstat(fd, &file_state) != 0)
-      abort();
-
-    data_ = mmap(nullptr, file_state.st_size, protection, mapping, fd, 0);
-
-    close(fd);
+      : MappedMemory(path, mode) {
   }
 
   ~PosixMappedMemory() override {
     if (data_) {
       munmap(data_, size_);
     }
-    if (file_handle) {
-      fclose(file_handle);
-    }
   }
-
-  FILE* file_handle;
 };
 
 std::unique_ptr<MappedMemory> MappedMemory::Open(const std::wstring& path,
                                                  Mode mode, size_t offset,
                                                  size_t length) {
   const char* mode_str;
+  int open_mode;
   int prot;
   switch (mode) {
     case Mode::kRead:
       mode_str = "rb";
+      open_mode = O_RDONLY;
       prot = PROT_READ;
       break;
     case Mode::kReadWrite:
       mode_str = "r+b";
+      open_mode = O_RDWR;
       prot = PROT_READ | PROT_WRITE;
       break;
   }
@@ -86,23 +57,26 @@ std::unique_ptr<MappedMemory> MappedMemory::Open(const std::wstring& path,
   auto mm =
       std::unique_ptr<PosixMappedMemory>(new PosixMappedMemory(path, mode));
 
-  mm->file_handle = fopen(xe::to_string(path).c_str(), mode_str);
-  if (!mm->file_handle) {
+  auto fd = fopen(xe::to_string(path).c_str(), mode_str);
+  if (!fd) {
+    fprintf(stderr, "POSIX error: %s\n", strerror(errno));
     return nullptr;
   }
 
   size_t map_length;
   map_length = length;
   if (!length) {
-    fseeko(mm->file_handle, 0, SEEK_END);
-    map_length = ftello(mm->file_handle);
-    fseeko(mm->file_handle, 0, SEEK_SET);
+    struct stat file_state;
+    fstat(fileno(fd), &file_state);
+    map_length = file_state.st_size;
   }
   mm->size_ = map_length;
 
   mm->data_ =
-      mmap(0, map_length, prot, MAP_SHARED, fileno(mm->file_handle), offset);
+      mmap(0, map_length, prot, MAP_SHARED, fileno(fd), offset);
+  fclose(fd);
   if (!mm->data_) {
+    fprintf(stderr, "POSIX error: %s\n", strerror(errno));
     return nullptr;
   }
 
@@ -112,6 +86,7 @@ std::unique_ptr<MappedMemory> MappedMemory::Open(const std::wstring& path,
 std::unique_ptr<ChunkedMappedMemoryWriter> ChunkedMappedMemoryWriter::Open(
     const std::wstring& path, size_t chunk_size, bool low_address_space) {
   // TODO(DrChat)
+  assert_always();
   return nullptr;
 }
 
