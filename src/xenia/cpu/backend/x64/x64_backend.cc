@@ -402,7 +402,6 @@ X64ThunkEmitter::~X64ThunkEmitter() {}
 #define THUNK_TARGET_REG    rdi
 #define THUNK_CONTEXT_REG   rsi
 #define THUNK_RETURN_REG    rdx
-#define THUNK_THREAD_STATE  rcx
 #endif
 
 #if XE_PLATFORM_WIN32
@@ -424,9 +423,6 @@ HostToGuestThunk X64ThunkEmitter::EmitHostToGuestThunk() {
 
   const size_t stack_size = StackLayout::THUNK_STACK_SIZE;
   // rsp + 0 = return address
-#if XE_PLATFORM_LINUX
-  mov(qword[rsp + 8 * 4], THUNK_THREAD_STATE);
-#endif
   mov(qword[rsp + 8 * 3], THUNK_RETURN_REG);
   mov(qword[rsp + 8 * 2], THUNK_CONTEXT_REG);
   mov(qword[rsp + 8 * 1], THUNK_TARGET_REG);
@@ -485,9 +481,6 @@ HostToGuestThunk X64ThunkEmitter::EmitHostToGuestThunk() {
   mov(THUNK_TARGET_REG, qword[rsp + 8 * 1]);
   mov(THUNK_CONTEXT_REG, qword[rsp + 8 * 2]);
   mov(THUNK_RETURN_REG, qword[rsp + 8 * 3]);
-#if XE_PLATFORM_LINUX
-  mov(THUNK_THREAD_STATE, qword[rsp + 8 * 4]);
-#endif
   ret();
 
   void* fn = Emplace(stack_size);
@@ -570,11 +563,15 @@ ResolveFunctionThunk X64ThunkEmitter::EmitResolveFunctionThunk() {
   // ebx = target PPC address
   // rcx = context
 
-  uint32_t stack_size = 0x18;
+  uint32_t stack_size = 0x28;
 
   // rsp + 0 = return address
-  mov(qword[rsp + 8 * 2], THUNK_CONTEXT);
-  mov(qword[rsp + 8 * 1], THUNK_ARG0);
+#if XE_PLATFORM_LINUX
+  mov(qword[rsp + 8 * 4], THUNK_ARG2);
+  mov(qword[rsp + 8 * 3], THUNK_ARG1);
+#endif
+  mov(qword[rsp + 8 * 2], THUNK_ARG0);
+  mov(qword[rsp + 8 * 1], THUNK_CONTEXT);
   sub(rsp, stack_size);
 
   mov(THUNK_CONTEXT, rsi);  // context
@@ -583,8 +580,12 @@ ResolveFunctionThunk X64ThunkEmitter::EmitResolveFunctionThunk() {
   call(rax);
 
   add(rsp, stack_size);
-  mov(THUNK_ARG0, qword[rsp + 8 * 1]);
-  mov(THUNK_CONTEXT, qword[rsp + 8 * 2]);
+  mov(THUNK_CONTEXT, qword[rsp + 8 * 1]);
+  mov(THUNK_ARG0, qword[rsp + 8 * 2]);
+#if XE_PLATFORM_LINUX
+  mov(THUNK_ARG1, qword[rsp + 8 * 3]);
+  mov(THUNK_ARG2, qword[rsp + 8 * 4]);
+#endif
   jmp(rax);
 
   void* fn = Emplace(stack_size);
