@@ -399,9 +399,22 @@ X64ThunkEmitter::~X64ThunkEmitter() {}
 #define THUNK_CONTEXT_REG rdx
 #define THUNK_RETURN_REG  r8
 #else
-#define THUNK_TARGET_REG  rdi
-#define THUNK_CONTEXT_REG rsi
-#define THUNK_RETURN_REG  rdx
+#define THUNK_TARGET_REG    rdi
+#define THUNK_CONTEXT_REG   rsi
+#define THUNK_RETURN_REG    rdx
+#define THUNK_THREAD_STATE  rcx
+#endif
+
+#if XE_PLATFORM_WIN32
+#define THUNK_CONTEXT rcx
+#define THUNK_ARG0    rdx
+#define THUNK_ARG1    r8
+#define THUNK_ARG2    r9
+#else
+#define THUNK_CONTEXT rdi
+#define THUNK_ARG0    rsi
+#define THUNK_ARG1    rdx
+#define THUNK_ARG2    rcx
 #endif
 
 HostToGuestThunk X64ThunkEmitter::EmitHostToGuestThunk() {
@@ -411,6 +424,9 @@ HostToGuestThunk X64ThunkEmitter::EmitHostToGuestThunk() {
 
   const size_t stack_size = StackLayout::THUNK_STACK_SIZE;
   // rsp + 0 = return address
+#if XE_PLATFORM_LINUX
+  mov(qword[rsp + 8 * 4], THUNK_THREAD_STATE);
+#endif
   mov(qword[rsp + 8 * 3], THUNK_RETURN_REG);
   mov(qword[rsp + 8 * 2], THUNK_CONTEXT_REG);
   mov(qword[rsp + 8 * 1], THUNK_TARGET_REG);
@@ -469,6 +485,9 @@ HostToGuestThunk X64ThunkEmitter::EmitHostToGuestThunk() {
   mov(THUNK_TARGET_REG, qword[rsp + 8 * 1]);
   mov(THUNK_CONTEXT_REG, qword[rsp + 8 * 2]);
   mov(THUNK_RETURN_REG, qword[rsp + 8 * 3]);
+#if XE_PLATFORM_LINUX
+  mov(THUNK_THREAD_STATE, qword[rsp + 8 * 4]);
+#endif
   ret();
 
   void* fn = Emplace(stack_size);
@@ -478,18 +497,6 @@ HostToGuestThunk X64ThunkEmitter::EmitHostToGuestThunk() {
 #undef THUNK_TARGET_REG
 #undef THUNK_CONTEXT_REG
 #undef THUNK_RETURN_REG
-
-#if XE_PLATFORM_WIN32
-#define THUNK_CONTEXT rcx
-#define THUNK_ARG0    rdx
-#define THUNK_ARG1    r8
-#define THUNK_ARG2    r9
-#else
-#define THUNK_CONTEXT rdi
-#define THUNK_ARG0    rsi
-#define THUNK_ARG1    rdx
-#define THUNK_ARG2    rcx
-#endif
 
 GuestToHostThunk X64ThunkEmitter::EmitGuestToHostThunk() {
   // rdx = target function  
