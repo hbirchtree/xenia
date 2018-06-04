@@ -183,6 +183,7 @@ add_library ( xenia-gpu STATIC
     src/xenia/gpu/spirv/compiler.cc
     src/xenia/gpu/spirv_shader_translator.cc
     src/xenia/gpu/texture_conversion.cc
+    src/xenia/gpu/texture_dump.cc
     src/xenia/gpu/texture_extent.cc
     src/xenia/gpu/texture_info.cc
     src/xenia/gpu/texture_info_formats.cc
